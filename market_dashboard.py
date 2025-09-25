@@ -2,188 +2,200 @@
 # -*- coding: utf-8 -*-
 
 """
-finance_dashboard_pipeline.py
-
-This script synthesizes the key lessons from the Python for Finance lectures:
-- Download financial and macroeconomic data (yfinance + FRED)
-- Save and reload data from CSV files
-- Handle missing values correctly (forward fill, no interpolation)
-- Compute arithmetic returns
-- Compute cumulative compounded returns (growth indexes)
-- Plot and save charts
-- Write modular code (each function does one thing only)
-
-Author: Alexandre Landi (Skema Business School)
-Academic Year 2025/26 — Fall 2025
+pipeline for downloading, cleaning, analyzing, and visualizing
+macroeconomic and financial data. Includes a Streamlit dashboard.
 """
 
-# -----------------------------
-# Imports
-# -----------------------------
+# ============================================================
+# 1. Import Block
+# ============================================================
 import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
 import pandas_datareader.data as dr
+import streamlit as st
 
-# -----------------------------
-# Functions
-# -----------------------------
+# ============================================================
+# 2. Function Definitions
+# ============================================================
 
 def download_yfinance_close(ticker, start, end):
-    """
-    Download adjusted close prices from Yahoo Finance.
-    Returns a DataFrame with Date as index and one column (the ticker).
-    """
     raw_data = yf.download(
         ticker,
         start=start,
         end=end,
         progress=False,
-        auto_adjust=False  # explicitly choose adjusted or raw prices
+        auto_adjust=False
     )
     price_data = raw_data[["Close"]].rename(columns={"Close": ticker})
     return price_data
 
-
+def download_fred(series, start):
+    fred_data = dr.DataReader(series, data_source="fred", start=start)
+    return fred_data
 
 def save_csv(dataframe, filename):
-    """Save a DataFrame to CSV in the current folder."""
     dataframe.to_csv(filename)
 
-
 def load_csv(filename):
-    """Load a CSV into a DataFrame (date index)."""
     dataframe = pd.read_csv(filename, index_col=0, parse_dates=True)
     return dataframe
 
-
-def download_fred(series, start=None):
-    """Download one or several series from FRED (macro data)."""
-    fred_data = dr.DataReader(series, data_source="fred", start=start_date)
-    return fred_data
-
-
-def forward_fill_only(dataframe):
-    """Forward fill missing values (no interpolation)."""
-    cleaned_data = dataframe.ffill()
-    return cleaned_data
-
-
-def drop_leading_nas(dataframe):
-    """Drop any remaining missing values at the start of the series."""
-    cleaned_data = dataframe.dropna()
-    return cleaned_data
-
+def preprocess_data(dataframe):
+    dataframe = dataframe.ffill()
+    dataframe = dataframe.dropna()
+    return dataframe
 
 def pct_change(dataframe):
-    """Compute arithmetic returns: (P_t / P_{t-1}) - 1."""
     arithmetic_returns = dataframe.pct_change()
     return arithmetic_returns
 
-
 def compound_from_arithmetic(arithmetic_returns):
-    """From arithmetic returns to cumulative compounded growth index."""
     cumulative_returns = (1 + arithmetic_returns).cumprod()
     return cumulative_returns
 
-
 def plot_series(dataframe, title, ylabel, filename):
-    """
-    Generic plot function.
-    Saves figure as PNG in the current folder.
-    """
-    fig, ax = plt.subplots(figsize=(10, 5))  # create a fresh figure
-    dataframe.plot(ax=ax)                    # plot into this figure
+    fig, ax = plt.subplots(figsize=(10, 5))
+    dataframe.plot(ax=ax)
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.set_xlabel("Date")
     ax.legend()
     fig.tight_layout()
     fig.savefig(filename)
-    plt.close(fig)  # close to avoid overlapping plots
+    plt.close(fig)
 
-# -----------------------------
-# Main workflow
-# -----------------------------
-
-
-# -------------------------
-# 1. Download macro data (CPI, GDP) from FRED
-# -------------------------
+# ============================================================
+# 3. Download Data Block
+# ============================================================
 
 start_date = "2000-01-01"
 end_date = "2025-09-09"
 
 fred_series = ["CPIAUCNS", "GDP"]
 macroeconomic_data = download_fred(fred_series, start=start_date)
-save_csv(macroeconomic_data, "macro.csv")
 
-# Clean missing values
-macroeconomic_data = forward_fill_only(macroeconomic_data)
-macroeconomic_data = drop_leading_nas(macroeconomic_data)
-
-# Compute returns
-macroeconomic_returns = pct_change(macroeconomic_data)
-
-# Compute cumulative growth
-macro_cumulative_returns = compound_from_arithmetic(macroeconomic_returns)
-
-# Plot
-plot_series(
-    macro_cumulative_returns,
-    "Cumulative Growth of CPI and GDP",
-    "Index",
-    "macro_cum.png"
-)
-
-# -------------------------
-# 2. Download financial assets from Yahoo
-# -------------------------
 tickers_and_files = {
-    "SPY": "SPY.csv",     # Equities (S&P 500 ETF)
-    "TLT": "TLT.csv",     # Bonds (US Treasuries ETF)
-    "GC=F": "Gold.csv",   # Gold futures
-    "CL=F": "Crude.csv",  # Crude Oil futures
-    "ZW=F": "Wheat.csv",  # Wheat futures
-    "DX=F": "USD.csv" # Dollar index
+    "ES=F": "SnP.csv",
+    "ZN=F": "Treasuries.csv",
+    "GC=F": "Gold.csv",
+    "CL=F": "Crude.csv",
+    "ZW=F": "Wheat.csv",
+    "DX=F": "USD.csv"
 }
 
+assets_data = {}
+for ticker, filename in tickers_and_files.items():
+    assets_data[ticker] = download_yfinance_close(ticker, start_date, end_date)
 
+# ============================================================
+# 4. Data Alignment
+# ============================================================
+
+all_start_dates = [macroeconomic_data.index.min()]
+for df in assets_data.values():
+    all_start_dates.append(df.index.min())
+
+common_start = max(all_start_dates)
+
+macroeconomic_data = macroeconomic_data.loc[macroeconomic_data.index >= common_start]
+for ticker in assets_data:
+    assets_data[ticker] = assets_data[ticker].loc[assets_data[ticker].index >= common_start]
+
+# ============================================================
+# 5. Write and Read CSV Blocks
+# ============================================================
+
+save_csv(macroeconomic_data, "macro.csv")
+for ticker, df in assets_data.items():
+    save_csv(df, tickers_and_files[ticker])
+
+# Alternative (comment above and uncomment below to load saved data)
+# macroeconomic_data = load_csv("macro.csv")
+# assets_data = {ticker: load_csv(file) for ticker, file in tickers_and_files.items()}
+
+# ============================================================
+# 6. Main Workflow
+# ============================================================
+
+macroeconomic_data = preprocess_data(macroeconomic_data)
+macroeconomic_returns = pct_change(macroeconomic_data)
+macro_cumulative_returns = compound_from_arithmetic(macroeconomic_returns)
+
+plot_series(macro_cumulative_returns,
+            "Cumulative Growth of CPI and GDP",
+            "Index",
+            "macro_only.png")
 
 all_assets_cumulative = pd.DataFrame()
+for ticker, df in assets_data.items():
+    df = preprocess_data(df)
+    asset_returns = pct_change(df)
+    asset_cumulative = compound_from_arithmetic(asset_returns)
+    all_assets_cumulative[ticker] = asset_cumulative[ticker]
 
+plot_series(all_assets_cumulative,
+            "Cumulative Growth of Financial Assets",
+            "Cumulative Growth",
+            "assets_only.png")
+
+# ============================================================
+# 7. Final Report
+# ============================================================
+
+print("\n=== Pipeline Finished Successfully ===\n")
+
+macro_start = macroeconomic_data.index.min().strftime("%Y-%m-%d")
+macro_end = macroeconomic_data.index.max().strftime("%Y-%m-%d")
+print(f"Macroeconomic data: {macro_start} to {macro_end}, saved to macro.csv")
+
+print("Financial assets:")
 for ticker, filename in tickers_and_files.items():
-    price_data = download_yfinance_close(ticker, start_date, end_date)
-    save_csv(price_data, filename)
+    df = assets_data[ticker]
+    start = df.index.min().strftime("%Y-%m-%d")
+    end = df.index.max().strftime("%Y-%m-%d")
+    print(f" - {ticker}: {start} to {end}, saved to {filename}")
 
-    price_data = forward_fill_only(price_data)
-    # price_data = drop_leading_nas(price_data)
+# ============================================================
+# 8. Streamlit Dashboard
+# ============================================================
 
-    # Compute cumulative arithmetic returns for each asset
-    arithmetic_returns = pct_change(price_data)
-    cumulative_returns = compound_from_arithmetic(arithmetic_returns)
+st.set_page_config("Cross-Asset Regime Monitor", layout="wide")
+st.title("Cross-Asset Regime Monitor")
 
-    all_assets_cumulative[ticker] = cumulative_returns[ticker]
+combined_cumulative = pd.concat(
+    [macro_cumulative_returns, all_assets_cumulative], axis=1
+).dropna()
 
-# -------------------------
-# 3. Separate visualizations
-# -------------------------
+available_assets = combined_cumulative.columns.tolist()
+min_date = combined_cumulative.index.min()
+max_date = combined_cumulative.index.max()
 
-# Plot only macroeconomic indicators
-plot_series(
-    macro_cumulative_returns,
-    "Cumulative Growth of CPI and GDP",
-    "Cumulative Growth",
-    "macro_only.png"
-)
+with st.sidebar:
+    st.header("Dashboard Controls")
+    selected_assets = st.multiselect("Select assets:", options=available_assets, default=available_assets)
+    date_range = st.date_input("Date range:",
+                               value=(min_date, max_date),
+                               min_value=min_date,
+                               max_value=max_date)
 
-# Plot only financial assets
-plot_series(
-    all_assets_cumulative,
-    "Cumulative Growth of Financial Assets",
-    "Cumulative Growth",
-    "assets_only.png"
-)
+if selected_assets:
+    filtered_data = combined_cumulative[selected_assets]
+else:
+    filtered_data = combined_cumulative.copy()
 
+start, end = date_range
+filtered_data = filtered_data.loc[start:end]
 
-print("Pipeline finished. Data and plots saved in the current folder.")
+st.subheader("Cumulative Returns Table")
+st.dataframe(filtered_data)
+
+fig_all, ax_all = plt.subplots(figsize=(10, 5))
+combined_cumulative.plot(ax=ax_all)
+ax_all.set_title("Cumulative Growth of All Series")
+st.pyplot(fig_all)
+
+fig_selected, ax_selected = plt.subplots(figsize=(10, 5))
+filtered_data.plot(ax=ax_selected)
+ax_selected.set_title("Cumulative Growth of Selected Series")
+st.pyplot(fig_selected)
